@@ -1,16 +1,20 @@
+import os
+
 import numpy as np
+from django.http import JsonResponse
 
 np.float_ = np.float64
 
 import yfinance as yf
 from prophet import Prophet
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
 class FinanceService:
     @staticmethod
     def get_dividend_history(ticker):
-        stock = yf.Ticker(ticker.strip() + ".SA")
+        stock = yf.Ticker(ticker)
         dividends = stock.dividends
 
         if dividends.empty:
@@ -57,7 +61,7 @@ class FinanceService:
         risk_free_rate = 0.03
         market_risk_premium = market_return - risk_free_rate
 
-        ticker_info = yf.Ticker(ticker.strip() + ".SA").info
+        ticker_info = yf.Ticker(ticker).info
         beta = ticker_info.get("beta", 1)  # Use 1 as default if beta is not available
 
         coe = round(beta * market_risk_premium + risk_free_rate, 4)
@@ -76,4 +80,77 @@ class FinanceService:
 
         fair_value = total_dividends_last_12_months * (1 + dividend_growth_rate) / abs(coe - dividend_growth_rate)
 
-        return fair_value
+        info = yf.Ticker(ticker).info
+
+        mean_price = info["targetMeanPrice"]
+        current_price = info["currentPrice"]
+
+        return mean_price if fair_value > current_price * 1.3 else fair_value
+
+    @staticmethod
+    def calculate_recommendation(current_price, intrinsic_value):
+        return "COMPRAR" if current_price <= intrinsic_value else "AGUARDAR"
+
+    @staticmethod
+    def calculate_risk(ticker):
+        data = yf.Ticker(ticker).history(period="5y")
+        std_dev = np.std(data['Close'])
+
+        # Normalize the risk to a scale of 0 to 100
+        max_std_dev = 50  # Define a maximum standard deviation for scaling purposes
+        risk = min(std_dev / max_std_dev * 100, 100)  # Ensure risk does not exceed 100
+
+        return risk
+
+    @staticmethod
+    def calculate_safety_margin_price(current_price, intrinsic_value):
+        return round((1 - current_price / intrinsic_value) * 100, 2)
+
+    @staticmethod
+    def plot_stock_history(ticker):
+        # Cria a pasta 'assets' se não existir
+        if not os.path.exists('assets'):
+            os.makedirs('assets')
+
+        # Obtém os dados históricos dos últimos 5 anos
+        data = yf.Ticker(ticker).history(period="5y")
+
+        # Cria o gráfico de linha
+        plt.figure(figsize=(10, 6))
+        plt.plot(data.index, data['Close'], label='Preço de Fechamento', color='blue')
+
+        # Adiciona títulos e rótulos
+        plt.title(f'Histórico de Preços de Fechamento - {ticker}')
+        plt.xlabel('Data')
+        plt.ylabel('Preço de Fechamento (R$)')
+        plt.legend()
+        plt.grid(True)
+
+        # Salva o gráfico na pasta 'assets'
+        file_path = os.path.join('assets', f'{ticker}_historico.png')
+        plt.savefig(file_path)
+        plt.close()
+
+        return file_path
+
+
+def ticker_info(request, ticker):
+    ticker = f"{ticker}.SA"
+
+    current_price = yf.Ticker(ticker).info["regularMarketPreviousClose"]
+    intrinsic_value = FinanceService.calculate_fair_value(ticker)
+    safety_margin = FinanceService.calculate_safety_margin_price(current_price, intrinsic_value)
+    risk = FinanceService.calculate_risk(ticker)
+    recommendation = FinanceService.calculate_recommendation(current_price, intrinsic_value)
+
+    response_data = {
+        'current_price': round(current_price, 2),
+        'intrinsic_value': round(intrinsic_value, 2),
+        'safety_margin': safety_margin,
+        'risk': round(risk, 2),
+        'recommendation': recommendation,
+    }
+
+    FinanceService.plot_stock_history(ticker)
+
+    return JsonResponse(response_data)

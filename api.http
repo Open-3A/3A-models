@@ -1,2 +1,2 @@
 ### Get Fair Price
-GET http://127.0.0.1:8000/api/fair-value/VALE3
+GET http://127.0.0.1:8000/api/ticker/VALE3
